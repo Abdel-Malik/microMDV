@@ -2,33 +2,39 @@
 #define MDV_H
 
 #include "Engine.h"
-#include "../ABS/outilDichotomie.h"
-
+#include "IntermediaireG.h"
+#include "../Gear_shift/GrilleInterpolation.h"
 class MDV
 {
     //temp
-    double TEMPS_CYCLE = 0.05; // s
-
+    double TEMPS_CYCLE = 0.005; // s (5ms)
+    GrilleInterpolation BSFC;
+    double* axeZ;
 
     //constantes
-    double M_PI = 3.1415916;
+    double M_PI = 3.1415926;
     double M_MIN_TO_M_S = 1.0/60;
-    double MASSE_VOLUMIQUE_AIR = 1.2; //kg/m^3
+    double MASSE_VOLUMIQUE_AIR = 1.22; //kg/m^3
 
-    BornesDichotomie bornes = BornesDichotomie();
+    //IntermediaireG
+    IntermediaireG i = IntermediaireG();
 
     //transmission
     double RATIO_T_PONT = 5.82;
     double rendementTransmission = 0.92;
     double rapportTransmission[7] = {4.24,3.36,1.91,1.42,1,0.72,0.62}; // gear : R - 1 - 2 - 3 - 4 - 5 - 6
+    double plageVitesse[7][2] = {{0,0},{1.643,6.318},{2.89,11.114},{3.887,14.949},{5.519,21.227},{7.665,29.482},{8.902,34.238}};
 
     //moteur
     Engine moteur;
+    double pFrein;
+    double pAcc;
+    double pEmb;
 
     //structure
     double surfaceFrontale = 5; //m^2
     double trainee = 0.8; //Cx
-    double resistanceRoulement = 0.008;
+    double coeffResistanceRoulement = 0.008;
     double masse = 16000; // kg
 
     //roue
@@ -36,25 +42,44 @@ class MDV
 
     //vehicule
     double v_auto = 0; // m/s
-    int gear = 6;
+    int gear = 1;
     bool pointMort = true;
 
     public:
+        void test(){
+            std::cout << i.getVitesse() << std::endl;
+        }
         MDV(){
             double a[3] = {-0.0001502,0.5648365,-263.93706};
             double b[3] = {0.0000352,-0.0985985,257.98788};
 
             moteur = Engine(a,b);
+            axeZ = i.getAxeZ();
+
+            BSFC = GrilleInterpolation(ModeConduite::ECO, axeZ, 20);
         }
 
         void fct(){
-            moteur.demarrerMoteur();
-            v_auto = 4.81;
-            for(int i =0; i <100; i++){
-                avancer();
-            }
-
+            v_auto = 0;
+            moteur.demarrerMoteur(WheelToRpm(v_auto));
+            pFrein = 0;
+            pAcc = 1;
+            majInter();
         }
+        double getVitesse(){
+            return v_auto*3.6;
+        }
+        void setpAcc(double a){
+            pAcc = a;
+        }
+    void avancer(int t){
+        if(t%1 == 0){
+            std::cout << v_auto << "m/s || "<<v_auto*3.6 <<"km/h - temps :"<<TEMPS_CYCLE*t<<"s || gear ="<<gear<<"\n"<<std::endl;
+        }
+        accelerationGagnee();
+        moteur.majOmegaEngine(WheelToRpm(v_auto),pAcc,gear);
+        majInter();
+    }
         double vitMotToWheel(){
             std::cout << moteur.getVitesse() << std::endl;
             return (moteur.getVitesse()/(RATIO_T_PONT*rapportTransmission[gear])*(2*M_PI*rayonRoue)*M_MIN_TO_M_S);
@@ -62,62 +87,45 @@ class MDV
         double WheelToRpm(double Wheel){
             return (Wheel*(RATIO_T_PONT*rapportTransmission[gear])/(2*M_PI*rayonRoue)*(1/M_MIN_TO_M_S));
         }
+
+        IntermediaireG* getI(){
+            return &i;
+        }
+
+        void setGear(int g){
+            gear = g;
+        }
     protected:
     private:
 
-    void avancer(){
-        if(pointMort){
-            pointMort = false;
-            gear = 1;
-            moteur.setAcceleration(true);
-        }
-        std::cout << v_auto*3.6 <<"km/h\n"<<std::endl;
-        accelerationGagnee();
-        moteur.newRotSpeed(WheelToRpm(v_auto));
-    }
 
     double resistanceAir(double v){
         return (.5*MASSE_VOLUMIQUE_AIR*surfaceFrontale*trainee*v*v);
     }
-    double puissanceMoteurDisponible(){
-        return moteur.coupleFourni()*rendementTransmission;
+    double resistanceRoulement(){
+        return coeffResistanceRoulement*masse*9.81;
     }
-    double deltaPuissance(){
-        return (puissanceMoteurDisponible()*(1-resistanceRoulement))-resistanceAir(v_auto);
-    }
-    double accelerationGagnee(){
-        double Tab[3] = {(borneHauteAcceleration()-borneBasseAcceleration())/2,borneBasseAcceleration(),borneHauteAcceleration()};
-        while(energieAcc(Tab[0])<-0.01 || energieAcc(Tab[0])>0.01){
-            if(energieAcc(Tab[0])<-0.01){
-                Tab[1] = Tab[0];
-                Tab[0] = (Tab[2]+Tab[1])/2;
-            }else{
-                Tab[2] = Tab[0];
-                Tab[0] = (Tab[2]+Tab[1])/2;
-            }
+
+
+    void accelerationGagnee(){
+        double v = plageVitesse[gear][1]*pAcc+plageVitesse[gear][0]*(1-pAcc);
+        double Fmoteur = 0.5*masse*((v*v)-(v_auto*v_auto))*rendementTransmission;
+        if(Fmoteur < 0){
+            Fmoteur = Fmoteur*(0.6*(moteur.getVitesse()/2500));
         }
-        std::cout << Tab[0] <<"\n"<<std::endl;
-        v_auto += Tab[0]*TEMPS_CYCLE;
+        double Fres = resistanceAir(v_auto)+resistanceRoulement();
+        v_auto += ((Fmoteur-Fres)/masse)*TEMPS_CYCLE;
     }
 
-    double borneHauteAcceleration(){
-        double y = 0;
-        while(energieAcc(y)<0)
-            y+=1;
-        return y;
-    }
-    double borneBasseAcceleration(){
-        double y = 0;
-        while(energieAcc(y)>0)
-            y-=1;
-        return y;
-    }
 
-    double energieAcc(double y){
-        double x = y*(2*resistanceAir(1)*TEMPS_CYCLE*v_auto+y*resistanceAir(1)*TEMPS_CYCLE*TEMPS_CYCLE+masse)+resistanceAir(v_auto)-deltaPuissance();
-        return x;
+    //Voisin inf' gauche
+    void majInter(){
+        i.majMDV(moteur.activationRalenti, gear, v_auto, moteur.puissanceFournie(pAcc), pAcc, pFrein, axeZ[(int)(20*moteur.getVitesse()/2500)+(int)(20*moteur.coupleFourni(pAcc)/1700)]);
     }
-
+/*
+    void majInter(){
+        i.majMDV(moteur.activationRalenti, gear, v_auto, moteur.puissanceFournie(pAcc), pAcc, pFrein, BSFC.interpolerPoint(moteur.getVitesse(),pAcc));
+    }*/
 };
 
 #endif // MDV_H
