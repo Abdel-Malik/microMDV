@@ -7,13 +7,13 @@
 class MDV
 {
     //temp
-    double TEMPS_CYCLE = 0.05; // s
+    double TEMPS_CYCLE = 0.1; // s
 
 
     //constantes
-    double M_PI = 3.1415916;
+    double M_PI = 3.1415926;
     double M_MIN_TO_M_S = 1.0/60;
-    double MASSE_VOLUMIQUE_AIR = 1.2; //kg/m^3
+    double MASSE_VOLUMIQUE_AIR = 1.22; //kg/m^3
 
     BornesDichotomie bornes = BornesDichotomie();
 
@@ -24,6 +24,9 @@ class MDV
 
     //moteur
     Engine moteur;
+    double pFrein;
+    double pAcc;
+    double pEmb;
 
     //structure
     double surfaceFrontale = 5; //m^2
@@ -36,7 +39,7 @@ class MDV
 
     //vehicule
     double v_auto = 0; // m/s
-    int gear = 6;
+    int gear = 1;
     bool pointMort = true;
 
     public:
@@ -48,9 +51,12 @@ class MDV
         }
 
         void fct(){
-            moteur.demarrerMoteur();
-            v_auto = 4.81;
-            for(int i =0; i <100; i++){
+            v_auto = 0;
+            moteur.demarrerMoteur(WheelToRpm(v_auto));
+            pFrein = 0;
+            pAcc = 0;
+            pEmb = 1;
+            for(int i =0; i <10; i++){
                 avancer();
             }
 
@@ -69,23 +75,27 @@ class MDV
         if(pointMort){
             pointMort = false;
             gear = 1;
-            moteur.setAcceleration(true);
+            moteur.setAcceleration(false);
         }
         std::cout << v_auto*3.6 <<"km/h\n"<<std::endl;
         accelerationGagnee();
-        moteur.newRotSpeed(WheelToRpm(v_auto));
+        moteur.majOmegaEngine(WheelToRpm(v_auto),(pEmb));
     }
 
     double resistanceAir(double v){
         return (.5*MASSE_VOLUMIQUE_AIR*surfaceFrontale*trainee*v*v);
     }
-    double puissanceMoteurDisponible(){
-        return moteur.coupleFourni()*rendementTransmission;
+    double coupleALaRoue(){
+        return ((moteur.coupleFourni(1-pEmb)*RATIO_T_PONT*rapportTransmission[gear])*rendementTransmission)*rayonRoue;
     }
     double deltaPuissance(){
-        return (puissanceMoteurDisponible()*(1-resistanceRoulement))-resistanceAir(v_auto);
+        return -(resistanceAir(v_auto));
+        //return (coupleALaRoue())-(resistanceAir(v_auto));
     }
-    double accelerationGagnee(){
+
+    void accelerationGagnee(){
+        v_auto += (deltaPuissance()/masse)*TEMPS_CYCLE;
+    }/*double accelerationGagnee(){
         double Tab[3] = {(borneHauteAcceleration()-borneBasseAcceleration())/2,borneBasseAcceleration(),borneHauteAcceleration()};
         while(energieAcc(Tab[0])<-0.01 || energieAcc(Tab[0])>0.01){
             if(energieAcc(Tab[0])<-0.01){
@@ -97,8 +107,8 @@ class MDV
             }
         }
         std::cout << Tab[0] <<"\n"<<std::endl;
-        v_auto += Tab[0]*TEMPS_CYCLE;
-    }
+        v_auto += Tab[0]*TEMPS_CYCLE*0.5;
+    }*/
 
     double borneHauteAcceleration(){
         double y = 0;
